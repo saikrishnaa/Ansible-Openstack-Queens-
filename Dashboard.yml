@@ -1,0 +1,23 @@
+---
+- name: login as controller
+  hosts: controller
+  remote_user: root
+  become: yes
+  tasks:
+    - name: install dashboard
+      apt:
+        name: openstack-dashboard
+        state: present
+
+    - name: Configure Openstack Dashboard
+      template: src=local_settings.py dest=/etc/openstack-dashboard/local_settings.py
+        
+    - name: update openstack apache2 dashboard config
+      lineinfile:
+        dest: /etc/apache2/conf-available/openstack-dashboard.conf
+        line: WSGIApplicationGroup %{GLOBAL}
+
+    - name: apache2 restart
+      service:
+        name: apache2
+        state: restarted

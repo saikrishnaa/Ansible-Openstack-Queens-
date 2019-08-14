@@ -1,0 +1,245 @@
+---
+- hosts: controller
+  tasks:
+    - name: NTP Installation and Configuration
+      apt: name=chrony state=latest
+
+    - name: Add NTP Server IP
+      replace:
+        path: /etc/chrony/chrony.conf
+        regexp: 'pool 2.debian.pool.ntp.org offline iburst'
+        replace: "server dns.pramati.com iburst"
+        backup: yes
+
+    - name: Allowed 10.0.0.0/24 Series
+      lineinfile:
+        path: /etc/chrony/chrony.conf
+        line: 'allow 10.0.0.0/24'
+        insertafter: 'foo.example.net'
+
+    - name: Start NTP Service
+      service:
+          name: chrony
+          state: restarted
+
+- hosts: compute
+  tasks:
+    - name: Ensure NTP is at the latest version
+      apt: name=chrony state=latest
+
+    - name: Add NTP Server IP
+      replace:
+        path: /etc/chrony/chrony.conf
+        regexp: 'pool 2.debian.pool.ntp.org offline iburst'
+        replace: "server controller iburst"
+        backup: yes
+
+    - name: Start NTP Service
+      service:
+          name: chrony
+          state: restarted
+
+- hosts: all
+  tasks:
+    - name: Verify NTP Connection
+      shell: chronyc sources
+
+- hosts: all
+  tasks:
+    - name: Openstack Client Packages Installation
+      apt: name=software-properties-common state=latest
+
+    - name: add-apt-repository cloud-archive:queens
+      apt_repository:
+         repo: ppa:ubuntu-cloud-archive/queens-staging
+
+    - name: Upgrade packages
+      apt: update_cache=yes upgrade=dist
+
+    - name: Reboot the server
+      tags: reboot
+      become: yes
+      become_user: root
+      shell: "sleep 5 && reboot"
+      async: 1
+      poll: 0
+
+    - name: Wait for the reboot to complete if there was a change.
+      wait_for_connection:
+        connect_timeout: 10
+        sleep: 5
+        delay: 5
+        timeout: 300
+
+    - name: Check the Uptime of the servers
+      shell: "uptime"
+      register: Uptime
+
+    - debug: var=Uptime
+
+    - name: OpenStack client
+      apt: name=python-openstackclient state=latest
+
+- hosts: controller
+  remote_user: root
+  vars:
+    mysql_root_password: root
+
+  tasks:
+    - name: Install the MYSQL package
+      apt:
+        name: "{{ item }}"
+        update_cache: true
+        state: latest
+        force: yes
+      with_items:
+        - 'mariadb-server'
+        - 'python-mysqldb'
+
+    - name: Create and Edit 99-openstack.cnf file
+      lineinfile:
+        dest: /etc/mysql/mariadb.conf.d/99-openstack.cnf
+        create: yes
+        line: "{{ item }}"
+      with_items:
+          - '[mysqld]'
+          - 'bind-address = 10.0.0.11'
+          - ''
+          - 'default-storage-engine = innodb'
+          - 'innodb_file_per_table = on'
+          - 'max_connections = 4096'
+          - 'collation-server = utf8_general_ci'
+          - 'character-set-server = utf8'
+
+    - name: Restart the database service
+      service:
+          name: mysql
+          state: restarted
+
+    - name: Set root Password
+      mysql_user: login_password={{ mysql_root_password }} check_implicit_admin=yes name=root host={{ item }} password={{ mysql_root_password }} state=present
+      with_items:
+        - localhost
+        - 127.0.0.1
+        - ::1
+
+    - name: Reload privilege tables
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - FLUSH PRIVILEGES
+      changed_when: False
+
+    - name: Remove anonymous users
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - DELETE FROM mysql.user WHERE User=''
+      changed_when: False
+
+    - name: Disallow root login remotely
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1')
+      changed_when: False
+
+    - name: Remove test database and access to it
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - DROP DATABASE IF EXISTS test
+        - DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%'
+      changed_when: False
+
+    - name: Reload privilege tables
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - FLUSH PRIVILEGES
+      changed_when: False
+
+#    - name: Create the keystone database
+#      mysql_user: login_user=root login_password={{ mysql_root_password }} name=keystone state=present
+
+    - name: Create the keystone database
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - CREATE DATABASE keystone;
+        - CREATE DATABASE glance;
+        - CREATE DATABASE nova_api;
+        - CREATE DATABASE nova;
+        - CREATE DATABASE nova_cell0;
+        - CREATE DATABASE neutron;
+      changed_when: False
+
+    - name: Grant access to localhost
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'localhost' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'localhost' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON nova_cell0.* TO 'nova'@'localhost' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'localhost' IDENTIFIED BY 'root';
+      changed_when: False
+
+    - name: Grant access to all
+      command: 'mysql -ne "{{ item }}"'
+      with_items:
+        - GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'%' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'%' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'%' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON nova_cell0.* TO 'nova'@'%' IDENTIFIED BY 'root';
+        - GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'%' IDENTIFIED BY 'root';
+      changed_when: False
+
+- hosts: controller
+  tasks:
+    - name: Install rabbitmq-server
+      apt: name=rabbitmq-server state=present force=yes
+
+    - name: Add the openstack user
+      command: rabbitmqctl add_user openstack root
+
+    - name: Permit configuration, write, and read access for the openstack user
+      command: rabbitmqctl set_permissions openstack ".*" ".*" ".*"
+
+    - name: Restart rabbitmq
+      service: name=rabbitmq-server state=restarted
+
+- hosts: controller
+  tasks:
+    - name: Install Memcahce the packages
+      apt:
+        name: "{{ item }}"
+        update_cache: true
+        state: latest
+        force: yes
+      with_items:
+        - 'memcached'
+        - 'python-memcache'
+
+    - name: Enable access by other nodes via the management network
+      replace:
+        path: /etc/memcached.conf
+        regexp: '-l 127.0.0.1'
+        replace: "-l 10.0.0.11"
+        backup: yes
+
+- hosts: controller
+  tasks:
+    - name: Install the etcd package
+      apt: name=etcd state=latest
+
+    - name: Enable access by other nodes via the management network
+      lineinfile:
+        dest: /etc/default/etcd
+        insertafter: EOF
+        line: "{{ item }}"
+      with_items:
+           - 'ETCD_NAME="controller"'
+           - 'ETCD_DATA_DIR="/var/lib/etcd"'
+           - 'ETCD_INITIAL_CLUSTER_STATE="new"'
+           - 'ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster-01"'
+           - 'ETCD_INITIAL_CLUSTER="controller=http://10.0.0.11:2380"'
+           - 'ETCD_INITIAL_ADVERTISE_PEER_URLS="http://10.0.0.11:2380"'
+           - 'ETCD_ADVERTISE_CLIENT_URLS="http://10.0.0.11:2379"'
+           - 'ETCD_LISTEN_PEER_URLS="http://0.0.0.0:2380"'
+           - 'ETCD_LISTEN_CLIENT_URLS="http://10.0.0.11:2379"'

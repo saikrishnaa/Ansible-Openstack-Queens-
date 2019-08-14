@@ -1,0 +1,137 @@
+---
+- name: login as controller
+  hosts: controller
+  remote_user: root
+  become: yes
+  tasks:
+  - name: install nova
+    apt: 
+     name: "{{ item }}" 
+     state: present
+    with_items:
+      - nova-api
+      - nova-conductor
+      - nova-consoleauth
+      - nova-novncproxy
+      - nova-scheduler
+      - nova-placement-api
+
+  - name: update nova config file
+    ini_file:
+        path: /etc/nova/nova.conf
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+    with_items:
+      - { section: "api_database", option: "connection", value: "mysql+pymysql://nova:root@controller/nova_api" }
+      - { section: "database", option: "connection", value: "mysql+pymysql://nova:root@controller/nova"}
+      - { section: "DEFAULT", option: "transport_url", value: "rabbit://openstack:root@controller"}
+      - { section: "api ", option: "auth_strategy", value: "keystone"}
+      - { section: "keystone_authtoken", option: "auth_url", value: "http://controller:5000/v3"}
+      - { section: "keystone_authtoken", option: "memcached_servers", value: "controller:11211"}
+      - { section: "keystone_authtoken", option: "auth_type", value: "password"}
+      - { section: "keystone_authtoken", option: "project_domain_name", value: "default"}
+      - { section: "keystone_authtoken", option: "user_domain_name", value: "default"}
+      - { section: "keystone_authtoken", option: "project_name", value: "service"}
+      - { section: "keystone_authtoken", option: "username", value: "nova"}
+      - { section: "keystone_authtoken", option: "password", value: "root"}
+      - { section: "DEFAULT", option: "my_ip", value: "10.0.0.11"}
+      - { section: "DEFAULT", option: "use_neutron", value: "True"}
+      - { section: "DEFAULT", option: "firewall_driver", value: "nova.virt.firewall.NoopFirewallDriver"}
+      - { section: "vnc", option: "enabled", value: "true"}
+      - { section: "vnc", option: "server_listen", value: "$my_ip"}
+      - { section: "vnc", option: "server_proxyclient_address", value: "$my_ip"}
+      - { section: "glance", option: "api_servers", value: "http://controller:9292"}
+      - { section: "oslo_concurrency", option: "lock_path", value: "/var/lib/nova/tmp"}
+      - { section: "placement", option: "os_region_name", value: "RegionOne"}
+      - { section: "placement", option: "project_domain_name", value: "Default"}
+      - { section: "placement", option: "project_name", value: "service"}
+      - { section: "placement", option: "auth_type", value: "password"}
+      - { section: "placement", option: "user_domain_name", value: "Default"}
+      - { section: "placement", option: "auth_url", value: "http://controller:5000/v3"}
+      - { section: "placement", option: "username", value: "placement"}
+      - { section: "placement", option: "password", value: "root"}
+      - { section: "scheduler", option: "discover_hosts_in_cells_interval", value: "300"}
+
+  - name: db sync
+    shell: "{{ item }}"
+    with_items:
+      - su -s /bin/sh -c "nova-manage api_db sync" nova
+      - su -s /bin/sh -c "nova-manage cell_v2 map_cell0" nova
+      - su -s /bin/sh -c "nova-manage cell_v2 create_cell --name=cell1 --verbose" nova
+      - su -s /bin/sh -c "nova-manage db sync" nova
+      - nova-manage cell_v2 list_cells
+    ignore_errors: yes
+
+  - name: restart services
+    service: 
+      name: "{{ item }}" 
+      state: restarted
+    with_items:
+      - "nova-api"
+      - "nova-consoleauth"
+      - "nova-scheduler"
+      - "nova-conductor"
+
+- name: login as compute
+  hosts: compute
+  remote_user: root
+  become: yes
+  tasks:
+  - name: install nova-compute package
+    apt:
+      name: nova-compute
+      state: present
+
+  - name: update glance-compute config file
+    ini_file:
+      path: /etc/nova/nova.conf
+      section: "{{ item.section }}"
+      option: "{{ item.option }}"
+      value: "{{ item.value }}"
+    with_items:
+      - { section: "DEFAULT", option: "transport_url", value: "rabbit://openstack:root@controller" }
+      - { section: "api", option: "auth_strategy", value: "keystone"}
+      - { section: "keystone_authtoken", option: "auth_url", value: "http://controller:5000/v3"}
+      - { section: "keystone_authtoken", option: "memcached_servers", value: "controller:11211"}
+      - { section: "keystone_authtoken", option: "auth_type", value: "password"}
+      - { section: "keystone_authtoken", option: "project_domain_name", value: "default"}
+      - { section: "keystone_authtoken", option: "user_domain_name", value: "default"}
+      - { section: "keystone_authtoken", option: "project_name", value: "service"}
+      - { section: "keystone_authtoken", option: "username", value: "nova"}
+      - { section: "keystone_authtoken", option: "password", value: "root"}
+      - { section: "DEFAULT", option: "my_ip", value: "10.0.0.31"}
+      - { section: "DEFAULT", option: "use_neutron", value: "True"}
+      - { section: "DEFAULT", option: "firewall_driver", value: "nova.virt.firewall.NoopFirewallDriver"}
+      - { section: "vnc", option: "enabled", value: "True"}
+      - { section: "vnc", option: "server_listen", value: "0.0.0.0"}
+#      - { section: "vnc", option: "my_ip", value: "10.0.0.21"}
+      - { section: "vnc", option: "server_proxyclient_address", value: "$my_ip"}
+      - { section: "vnc", option: "novncproxy_base_url", value: "http://controller:6080/vnc_auto.html"}
+      - { section: "glance", option: "api_servers", value: "http://controller:9292"}
+      - { section: "oslo_concurrency", option: "lock_path", value: "/var/lib/nova/tmp"}
+      - { section: "placement", option: "os_region_name", value: "RegionOne"}
+      - { section: "placement", option: "project_domain_name", value: "Default"}
+      - { section: "placement", option: "project_name", value: "service"}
+      - { section: "placement", option: "auth_type", value: "password"}
+      - { section: "placement", option: "user_domain_name", value: "Default"}
+      - { section: "placement", option: "auth_url", value: "http://controller:5000/v3"}
+      - { section: "placement", option: "username", value: "placement"}
+      - { section: "placement", option: "password", value: "root"}
+#      - { section: "scheduler", option: "discover_hosts_in_cells_interval", value: "300"}
+
+  - name: restart nova-compute
+    service: name=nova-compute state=restarted
+
+- name: login as controller
+  hosts: controller
+  remote_user: root
+  become: yes
+  tasks:
+  - name: compute list and db sync
+    shell: "{{ item }}"
+    with_items:
+      - su -s /bin/sh -c "nova-manage cell_v2 discover_hosts --verbose" nova
+      - sh nova-verification.sh
+#      - "openstack compute service list --service nova-compute"
+#    ignore_errors: yes

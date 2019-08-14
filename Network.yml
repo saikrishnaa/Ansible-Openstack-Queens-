@@ -1,0 +1,75 @@
+---
+- name: login as controller
+  hosts: controller
+  remote_user: root
+  become: yes
+  tasks:
+    - name: update network interface
+      lineinfile:
+        dest: /etc/network/interfaces
+        regexp: 'iface lo inet loopback'
+        line: "{{ item }}"
+      with_items:
+          - 'auto enp0s3'
+          - 'iface enp0s3 inet static'
+          - '      address 172.16.18.18'
+          - '      netmask 255.255.255.0'
+          - '      gateway 172.16.18.1'
+          - '      dns-nameservers 192.168.1.10'
+          - 'auto enp0s8'
+          - '      iface enp0s8 inet static'
+          - '      address 10.0.0.11'
+          - '      netmask 255.255.255.0'
+    - name: network restart
+      service:
+        name: networking
+        state: restarted
+
+- name: login as compute
+  hosts: compute
+  remote_user: root
+  become: yes
+  tasks:
+    - name: update compute network interface
+      lineinfile:
+        dest: /etc/network/interfaces
+        insertafter: EOF
+        line: "{{ item }}"
+      with_items:
+          - 'auto enp0s3'
+          - 'iface enp0s3 inet static'
+          - '      address 172.16.18.19'
+          - '      netmask 255.255.255.0'
+          - '      gateway 172.16.18.1'
+          - '      dns-nameservers 192.168.1.10'
+
+          - 'auto enp0s8'
+          - '      iface enp0s8 inet static'
+          - '      address 10.0.0.31'
+          - '      netmask 255.255.255.0'
+
+    - name: network restart
+      service:
+        name: networking
+        state: restarted
+
+- hosts: all
+  tasks:
+    - name: Update Hosts File
+      lineinfile:
+        dest: /etc/hosts
+        regexp: 'ff02::2 ip6-allrouters'
+        line: "{{ item }}"
+      with_items:
+          - '# Controller'
+          - '10.0.0.11       controller'
+          - '# Compute'
+          - '10.0.0.31       compute'
+
+- hosts: all
+  tasks:
+    - name: Update Hosts File
+      lineinfile:
+        dest: /etc/hosts
+        regexp: '(.*127.0.0.1.*)'
+        replace: '#\1'

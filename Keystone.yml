@@ -1,0 +1,90 @@
+---
+- name: login into controller
+  hosts: controller
+  tasks:
+    - name: install keystone
+      apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - keystone
+        - apache2
+        - libapache2-mod-wsgi
+
+    - name: update keystone config file
+      ini_file:
+        path: /etc/keystone/keystone.conf
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+      with_items:
+        - { section: "database", option: "connection", value: "mysql+pymysql://keystone:root@controller/keystone" }
+        - { section: "token", option: "provider", value: "fernet" }
+
+    - name: keystone database sync
+      shell: su -s /bin/sh -c "keystone-manage db_sync" keystone
+
+    - name: Initialize Fernet key repositories
+      shell: "{{ item }}"
+      with_items:
+        - "keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone"
+        - "keystone-manage credential_setup --keystone-user keystone --keystone-group keystone"
+
+    - name: update keystone bootstrap
+      shell: "keystone-manage bootstrap --bootstrap-password root --bootstrap-admin-url http://controller:5000/v3/ --bootstrap-internal-url http://controller:5000/v3/ --bootstrap-public-url http://controller:5000/v3/ --bootstrap-region-id RegionOne"
+
+
+    - name: create admin-openrc
+      template: src=admin-openrc.sh.j2 dest=/root/admin-openrc.sh
+  
+    - name: create demo-openrc.sh
+      template: src=demo-openrc.sh.j2 dest=/root/demo-openrc.sh
+  
+    - name: Copy all tenants, users, roles, services and endpoints
+      template: src=keystone.sh dest=/root/keystone.sh
+
+    - name: Copy Keystone verification file
+      template: src=keystone-verification.sh dest=/root/keystone-verification.sh
+
+    - name: Copy Glance verification file
+      template: src=glance-verification.sh dest=/root/glance-verification.sh
+
+    - name: Copy Nova verification file
+      template: src=nova-verification.sh dest=/root/nova-verification.sh
+
+    - name: Copy Neutron verification file
+      template: src=neutron-verification.sh dest=/root/neutron-verification.sh
+
+    - name: Copy Dashboard config file
+      template: src=local_settings.py dest=/root/local_settings.py
+  
+    - name: create Configure all tenants, users, roles, services and endpoints
+      shell: "{{ item }}"
+      with_items:
+#        - "sh admin-openrc.sh"
+        - "sh keystone.sh"
+
+    - name: Update apache2 file
+      replace:
+         path: /etc/apache2/apache2.conf
+         regexp: ServerName
+         replace: ServerName controller
+
+    - name: Update apache2 file
+      lineinfile:
+        dest: /etc/apache2/apache2.conf
+        insertafter: EOF
+        line: ServerName controller
+        backup: yes
+
+    - name: Enable apache2
+      systemd:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: verification
+      shell: "{{ item }}"
+      with_items:
+        - "sh keystone-verification.sh"
+#        - "openstack token issue"
