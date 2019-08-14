@@ -63,9 +63,9 @@
       - { section: "ml2", option: "tenant_network_types", value: "vxlan" }
       - { section: "ml2", option: "mechanism_drivers", value: "linuxbridge,l2population" }
       - { section: "ml2", option: "extension_drivers", value: "port_security" }
-      - { section: "ml2", option: "flat_networks", value: "provider" }
-      - { section: "ml2", option: "vni_ranges", value: "1:1000" }
-      - { section: "ml2", option: "enable_ipset", value: "true" }
+      - { section: "ml2_type_flat", option: "flat_networks", value: "provider" }
+      - { section: "ml2_type_vxlan", option: "vni_ranges", value: "1:1000" }
+      - { section: "securitygroup", option: "enable_ipset", value: "true" }
 
   - name: update linuxbridge_agent config file
     ini_file:
